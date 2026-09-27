@@ -8,8 +8,10 @@ import subprocess
 import ipaddress
 import builtins
 from datetime import datetime
+import resource
 
 METRICA_INFINITA = 16
+TEMPO_UPDATE = 15
 
 # print custom com timestamp
 def print_com_timestamp(*args, **kwargs):
@@ -26,6 +28,16 @@ class Roteador:
     tabela_rotas: Dict[str, Dict[str, Any]] = field(default_factory=dict)
     # tabela de dados duplos, vai ter os dados da segunda melhor rota, usado para redundançia e quedas de link
     tabela_backup: Dict[str, Dict[str, Any]] = field(default_factory=dict)
+    pacotes_enviados_total: int = 0
+    pacotes_recebidos_total: int = 0
+    bytes_enviados_total: int = 0
+
+    bytes_enviados: int = 0
+    pacotes_enviados: int = 0
+    pacotes_recebidos: int = 0
+    pacotes_controle: int = 0
+
+    delays_vizinhos: Dict[str, list] = field(default_factory=dict)
 
 
 def carregar_rotas_locais(node: Roteador):
@@ -86,6 +98,15 @@ def escutar_rotas(node: Roteador):
 
             mensagem = json.loads(dados.decode('utf-8'))
             redes_recebidas = mensagem.get("minhas_redes", {})
+
+            hora_envio = mensagem.get("timestamp_envio", time.time())
+            delay_ms = (time.time() - hora_envio) * 1000
+            node.pacotes_recebidos += 1
+            node.pacotes_recebidos_total += 1
+
+            if ip_vizinho not in node.delays_vizinhos:
+                node.delays_vizinhos[ip_vizinho] = []
+            node.delays_vizinhos[ip_vizinho].append(delay_ms)
 
             for rede_destino, info in redes_recebidas.items():
                 metrica_recebida = info["metrica"]
@@ -200,7 +221,12 @@ def anunciar_rotas(node: Roteador):
     sock.setsockopt(socket.SOL_SOCKET, socket.SO_BROADCAST, 1)
 
     while True:
-        meu_anuncio = json.dumps({"minhas_redes": node.tabela_rotas})
+
+        dados_envio = {
+            "minhas_redes": node.tabela_rotas,
+            "timestamp_envio": time.time()
+        }
+        meu_anuncio = json.dumps(dados_envio)
 
         for rede, info in node.tabela_rotas.items():
             # Anuncia a tabela para os nós ligados
@@ -208,14 +234,20 @@ def anunciar_rotas(node: Roteador):
                 try:
                     rede_obj = ipaddress.IPv4Network(rede, strict=False)
                     ip_broadcast = str(rede_obj.broadcast_address)
-                    print(f"anunciando rota {node.tabela_rotas} pela porta {node.porta} na rede {ip_broadcast}")
+                    print(f"anunciando rotas pela porta {node.porta} na rede {ip_broadcast}")
 
                     # Envia para os ips de broadcast de cada interface, um erro no docker acontece se não for
                     # feito um sendo para o ip correto da interface
+                    payload_bytes = meu_anuncio.encode('utf-8')
                     sock.sendto(meu_anuncio.encode('utf-8'), (ip_broadcast, node.porta))
+
+                    node.pacotes_enviados_total += 1
+                    node.pacotes_enviados += 1
+                    node.bytes_enviados += len(payload_bytes)
+                    node.bytes_enviados_total += len(payload_bytes)
                 except Exception as e:
                     pass
-        time.sleep(5)
+        time.sleep(TEMPO_UPDATE)
 
 
 def verificar_timeouts(node: Roteador):
@@ -239,6 +271,8 @@ def verificar_timeouts(node: Roteador):
                         # Renova o timer para não pingar a cada 5 segundos
                         node.tabela_rotas[rede]["ultimo_update"] = agora
 
+                    node.pacotes_controle = node.pacotes_controle + 2
+
         # 2. para cada rota que caiu, a tabela é atualizada usando a tabela de backup para não ficar sem uma rota
         # caso a rota não exista na tabela muda a métrica para infinito e deleta a rota do sistema
         for rede_destino, ip_vizinho in rotas_cairam:
@@ -254,7 +288,7 @@ def verificar_timeouts(node: Roteador):
                 # atualiza a rota atual com a do backup
                 nova_rota = node.tabela_backup[rede_destino].pop(melhor_vizinho_backup)
                 nova_rota["next_hop"] = melhor_vizinho_backup
-                nova_rota["ultimo_update"] = time.time()  # Reseta o timer da rota promovida
+                nova_rota["ultimo_update"] = time.time()
                 node.tabela_rotas[rede_destino] = nova_rota
 
                 # injeta a nova rota no sistema
@@ -266,3 +300,58 @@ def verificar_timeouts(node: Roteador):
                 subprocess.run(["ip", "route", "del", rede_destino, "via", ip_vizinho], check=False)
 
         time.sleep(5)
+
+
+def monitorar_metricas(node: Roteador):
+    print("Iniciando coleta de métricas...")
+    intervalo = 10
+
+    while True:
+        time.sleep(intervalo)
+
+        # 1. Tamanho da Tabela
+        tamanho_tabela = len(node.tabela_rotas)
+        tamanho_tabela_backup = len(node.tabela_backup)
+
+        bytes_tabela_principal = len(json.dumps(node.tabela_rotas).encode('utf-8'))
+        bytes_tabela_backup = len(json.dumps(node.tabela_backup).encode('utf-8'))
+        bytes_totais = bytes_tabela_principal + bytes_tabela_backup
+
+        # 2. Taxas de Transmissão (Ciclo)
+        taxa_tx_bps = (node.bytes_enviados * 8) / intervalo
+        tx_pps = node.pacotes_enviados / intervalo  # Pacotes por segundo enviados
+        rx_pps = node.pacotes_recebidos / intervalo  # Pacotes por segundo recebidos
+
+        # 3. Cálculo da Média de Delay
+        delays_medios = []
+        for vizinho, lista_delays in node.delays_vizinhos.items():
+            if lista_delays:
+                media = sum(lista_delays) / len(lista_delays)
+                delays_medios.append(f"{vizinho}: {media:.2f}ms")
+
+        texto_delays = " | ".join(delays_medios) if delays_medios else "Sem dados"
+
+        # 4. Memória RAM (Linux Resident Set Size)
+        uso_memoria_kb = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss
+
+        print(f"=== TELEMETRIA (10s) ===")
+        print(f" -> Tabela: {tamanho_tabela} rotas ativas ({bytes_tabela_principal} bytes)")
+        print(f" -> Backup: {tamanho_tabela_backup} rotas de backup ({bytes_tabela_backup} bytes)")
+        print(f" -> Total Tabelas: {tamanho_tabela_backup + tamanho_tabela} total de rotas ({bytes_totais} bytes)")
+        print(f" -> Tráfego: Tx {taxa_tx_bps:.2f} bps | Tx {tx_pps:.1f} pps | Rx {rx_pps:.1f} pps")
+        print(f" -> Controle: {node.pacotes_controle} Pkt Enviados")
+        print(f" -> Ciclo: {node.pacotes_enviados} Pkt Enviados | {node.pacotes_recebidos} Pkt Recebidos")
+        print(f" -> Totais: {node.pacotes_enviados_total} Pkt Enviados | {node.pacotes_recebidos_total} Pkt Recebidos")
+        print(f" -> Memória: {uso_memoria_kb} KB")
+        print(f" -> Delays Médios: {texto_delays}")
+        print("========================\n")
+
+        # 5. ZERAR OS CONTADORES DE CICLO (O segredo da monitoração!)
+        node.bytes_enviados = 0
+        node.pacotes_enviados = 0
+        node.pacotes_recebidos = 0
+        node.pacotes_controle = 0
+
+        # Limpa as listas de delay para o próximo cálculo ser apenas dos próximos 10s
+        for vizinho in node.delays_vizinhos:
+            node.delays_vizinhos[vizinho].clear()

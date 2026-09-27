@@ -1,6 +1,6 @@
 import threading
 import argparse
-from roteador import Roteador, escutar_rotas, anunciar_rotas, carregar_rotas_locais, verificar_timeouts
+from roteador import Roteador, escutar_rotas, anunciar_rotas, carregar_rotas_locais, verificar_timeouts,monitorar_metricas
 
 if __name__ == "__main__":
     # cria parser para argumento de porta do roteador
@@ -22,14 +22,17 @@ if __name__ == "__main__":
     t_rx = threading.Thread(target=escutar_rotas, args=(node,))
     t_tx = threading.Thread(target=anunciar_rotas, args=(node,))
     t_timeout = threading.Thread(target=verificar_timeouts, args=(node,))
+    t_metricas = threading.Thread(target=monitorar_metricas, args=(node,))
 
     t_rx.start()
     t_tx.start()
     t_timeout.start()
+    t_metricas.start()
 
     t_rx.join()
     t_tx.join()
     t_timeout.join()
+    t_metricas.join()
 
 
 # algoritmo é similar ao ripv2, mantem uma tabela secundária com o segundo melhor valor de cada rota
