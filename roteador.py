@@ -8,6 +8,7 @@ import subprocess
 import ipaddress
 import builtins
 from datetime import datetime
+import os
 import resource
 
 METRICA_INFINITA = 16
@@ -346,12 +347,24 @@ def monitorar_metricas(node: Roteador):
         print(f" -> Delays Médios: {texto_delays}")
         print("========================\n")
 
-        # 5. ZERAR OS CONTADORES DE CICLO (O segredo da monitoração!)
-        node.bytes_enviados = 0
-        node.pacotes_enviados = 0
-        node.pacotes_recebidos = 0
-        node.pacotes_controle = 0
+        try:
+            # Força o caminho para ser a mesma pasta do script roteador.py
+            diretorio_script = os.path.dirname(os.path.abspath(__file__))
+            arquivo_csv = os.path.join(diretorio_script, "metricas_customizado.csv")
 
-        # Limpa as listas de delay para o próximo cálculo ser apenas dos próximos 10s
-        for vizinho in node.delays_vizinhos:
-            node.delays_vizinhos[vizinho].clear()
+            cabecalho_existe = os.path.exists(arquivo_csv)
+
+            with open(arquivo_csv, "a", encoding="utf-8") as f:
+                if not cabecalho_existe:
+                    f.write(
+                        "Timestamp,Tabela_Rotas,Memoria_KB,Updates_Enviados,Updates_Recebidos,Rotas_Backup,Bytes_Principal,Bytes_Backup,Pacotes_Controle,Taxa_TX_bps,Delay_Medio\n")
+
+                timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                linha = f"{timestamp},{tamanho_tabela},{uso_memoria_kb},{node.pacotes_enviados},{node.pacotes_recebidos},{tamanho_tabela_backup},{bytes_tabela_principal},{bytes_tabela_backup},{node.pacotes_controle},{taxa_tx_bps:.2f},{texto_delays}\n"
+                f.write(linha)
+
+            # Imprime na tela o caminho exato onde o arquivo está sendo gerado
+            print(f" [OK] CSV atualizado em: {arquivo_csv}")
+
+        except Exception as e:
+            print(f" [ERRO] Falha ao gravar CSV: {e}")
