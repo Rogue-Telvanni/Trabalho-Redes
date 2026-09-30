@@ -1,0 +1,130 @@
+name: lab-redes
+
+topology:
+  nodes:
+    # --- Roteadores ---
+    r0:
+      kind: linux
+      image: frrouting/frr:latest
+      binds:
+        - configs/r0/daemons:/etc/frr/daemons
+        - configs/r0/frr.conf:/etc/frr/frr.conf
+        - algoritmo_customizado/:/opt/algoritmo_customizado/ # algoritmo script python
+      exec:
+        - apk add --no-cache python3  # Instala o Pythonao subir o container
+    r1:
+      kind: linux
+      image: frrouting/frr:latest
+      binds:
+        - configs/r1/daemons:/etc/frr/daemons
+        - configs/r1/frr.conf:/etc/frr/frr.conf
+        - algoritmo_customizado/:/opt/algoritmo_customizado/
+      exec:
+        - apk add --no-cache python3
+    r2:
+      kind: linux
+      image: frrouting/frr:latest
+      binds:
+        - configs/r2/daemons:/etc/frr/daemons
+        - configs/r2/frr.conf:/etc/frr/frr.conf
+        - algoritmo_customizado/:/opt/algoritmo_customizado/
+      exec:
+        - apk add --no-cache python3
+    r3:
+      kind: linux
+      image: frrouting/frr:latest
+      binds:
+        - configs/r3/daemons:/etc/frr/daemons
+        - configs/r3/frr.conf:/etc/frr/frr.conf
+        - algoritmo_customizado/:/opt/algoritmo_customizado/
+      exec:
+        - apk add --no-cache python3
+    r4:
+      kind: linux
+      image: frrouting/frr:latest
+      binds:
+        - configs/r4/daemons:/etc/frr/daemons
+        - configs/r4/frr.conf:/etc/frr/frr.conf
+        - algoritmo_customizado/:/opt/algoritmo_customizado/
+      exec:
+        - apk add --no-cache python3
+    r5:
+      kind: linux
+      image: frrouting/frr:latest
+      binds:
+        - configs/r5/daemons:/etc/frr/daemons
+        - configs/r5/frr.conf:/etc/frr/frr.conf
+        - algoritmo_customizado/:/opt/algoritmo_customizado/
+      exec:
+        - apk add --no-cache python3
+        
+    # --- Switch ---
+    switch0:
+      kind: linux
+      image: alpine:latest
+      exec:
+        - ip link add br0 type bridge
+        - ip link set br0 up
+        - ip link set eth1 master br0 up
+        - ip link set eth2 master br0 up
+        - ip link set eth3 master br0 up
+
+    # --- PCs ---
+    pc0:
+      kind: linux
+      image: alpine:latest
+      exec:
+        - ip addr add 192.168.5.10/24 dev eth1
+        - ip route replace default via 192.168.5.1
+    pc1:
+      kind: linux
+      image: alpine:latest
+      exec:
+        - ip addr add 192.168.1.10/24 dev eth1
+        - ip route replace default via 192.168.1.1
+    pc2:
+      kind: linux
+      image: alpine:latest
+      exec:
+        - ip addr add 192.168.20.10/24 dev eth1
+        - ip route replace default via 192.168.20.1
+    pc3:
+      kind: linux
+      image: alpine:latest
+      exec:
+        - ip addr add 192.168.20.11/24 dev eth1
+        - ip route replace default via 192.168.20.1
+    pc4:
+      kind: linux
+      image: alpine:latest
+      exec:
+        - ip addr add 192.168.12.10/24 dev eth1
+        - ip route replace default via 192.168.12.1
+    pc5:
+      kind: linux
+      image: alpine:latest
+      exec:
+        - ip addr add 192.168.6.10/24 dev eth1
+        - ip route replace default via 192.168.6.1
+    
+
+  links:
+    # Enlaces Ponto a Ponto entre Roteadores
+    - endpoints: ["r0:eth1", "r1:eth1"]  # 10.0.1.0/30
+    - endpoints: ["r0:eth2", "r3:eth1"]  # 10.0.3.0/30
+    - endpoints: ["r1:eth2", "r2:eth1"]  # 10.1.2.0/30
+    - endpoints: ["r2:eth2", "r3:eth2"]  # 10.2.3.0/30
+    - endpoints: ["r2:eth3", "r4:eth1"]  # 10.2.4.0/30
+    - endpoints: ["r3:eth3", "r4:eth2"]  # 10.3.4.0/30
+    - endpoints: ["r4:eth3", "r5:eth1"]  # 10.4.5.0/30
+
+    # Redes de Acesso (LANs)
+    - endpoints: ["r0:eth3", "pc0:eth1"] # 192.168.5.0/24
+    - endpoints: ["r1:eth3", "pc1:eth1"] # 192.168.1.0/24
+    - endpoints: ["r3:eth4", "pc5:eth1"] # 192.168.6.0/24
+    - endpoints: ["r4:eth4", "pc4:eth1"] # 192.168.12.0/24
+    
+    # Segmento LAN com Switch (192.168.20.0/24)
+    - endpoints: ["r5:eth2", "switch0:eth1"]
+    - endpoints: ["pc2:eth1", "switch0:eth2"]
+    - endpoints: ["pc3:eth1", "switch0:eth3"]
