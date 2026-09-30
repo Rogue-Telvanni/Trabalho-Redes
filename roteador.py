@@ -126,7 +126,7 @@ def escutar_rotas(node: Roteador):
                     # --- REGRAS DE MÉTRICA ---
                     if rota_atual["next_hop"] == ip_vizinho:
 
-                        # CASO 1: Rota caiu (Poisoning)
+                        # Rota caiu validar e pingar ela
                         if metrica_recebida >= METRICA_INFINITA:
                             print(f"Rota para {rede_destino} via {ip_vizinho} falhou (Métrica Infinita)!")
 
@@ -148,19 +148,19 @@ def escutar_rotas(node: Roteador):
                                 node.tabela_rotas[rede_destino]["metrica"] = METRICA_INFINITA
                                 subprocess.run(["ip", "route", "del", rede_destino, "via", ip_vizinho], check=False)
 
-                        # CASO 2: Recebeu a mesma métrica do original, mantém o valor e atualizar o timer
+                        # Recebeu a mesma métrica do original, mantém o valor e atualizar o timer
                         elif metrica_recebida == rota_atual["metrica"]:
                             node.tabela_rotas[rede_destino]["ultimo_update"] = time.time()
 
-                        # CASO 3: A rota da origem piorou, usa a nova rota da origem, pois ele era o melhor antes
-                        # confia 100% nele
+                        # A rota da origem piorou, usa a nova rota da origem, pois ele era o melhor antes
+                        # confia full nele
                         elif metrica_recebida > rota_atual["metrica"]:
                             print(f"Métrica degradada de {rota_atual['metrica']} para {metrica_recebida} na rede {rede_destino} via {ip_vizinho}")
                             node.tabela_rotas[rede_destino]["metrica"] = metrica_recebida
                             node.tabela_rotas[rede_destino]["ultimo_update"] = time.time()
 
 
-                    # CASO 4: Outra interface ofereceu uma rota melhor
+                    # Outra interface ofereceu uma rota melhor
                     elif metrica_recebida < rota_atual["metrica"]:
                         if rede_destino not in node.tabela_backup:
                             node.tabela_backup[rede_destino] = {}
@@ -174,7 +174,7 @@ def escutar_rotas(node: Roteador):
                         }
                         injetar_rota_sistema(rede_destino, ip_vizinho)
 
-                    # CASO 5: Outra interface ofereceu uma rota PIOR (Guardar no Backup)
+                    # Outra interface ofereceu uma rota PIOR (Guardar no Backup)
                     # isso é usado para no caso de uma interface cair para sempre ter um caminho
                     elif rota_atual["metrica"] < metrica_recebida < METRICA_INFINITA:
                         if rede_destino not in node.tabela_backup:
@@ -184,9 +184,9 @@ def escutar_rotas(node: Roteador):
                             "id_origem": id_origem
                         }
 
-                # --- CASO 6: Nova rota, adiciona na tabela
+                # --- Nova rota, só adiciona na tabela
                 else:
-                    # Só aceita se a métrica inicial for de um link ativo
+                    # Só aceita se a métrica inicial for de um link ativo, ou seja não infinito
                     if metrica_recebida < METRICA_INFINITA:
                         print(f"Nova rede descoberta: {rede_destino} via {ip_vizinho}")
                         node.tabela_rotas[rede_destino] = {
@@ -258,9 +258,8 @@ def verificar_timeouts(node: Roteador):
         agora = time.time()
         rotas_cairam = []
 
-        # 1. Varredura para encontrar rotas expiradas
+        # Procura rotas expiradas
         for rede, info in list(node.tabela_rotas.items()):
-            # só identifica rotas de vizinhos que não tem tamanho 0 e que ainda não estão caídos
             if 0 < info["metrica"] < METRICA_INFINITA:
                 if (agora - info["ultimo_update"]) > timeout:
                     print(f"Alerta: Sem atualizações de {rede} por {timeout}s. Validando link via ping...")
@@ -274,7 +273,7 @@ def verificar_timeouts(node: Roteador):
 
                     node.pacotes_controle = node.pacotes_controle + 2
 
-        # 2. para cada rota que caiu, a tabela é atualizada usando a tabela de backup para não ficar sem uma rota
+        # para cada rota que caiu, a tabela é atualizada usando a tabela de backup para não ficar sem uma rota
         # caso a rota não exista na tabela muda a métrica para infinito e deleta a rota do sistema
         for rede_destino, ip_vizinho in rotas_cairam:
             print(f"Link para {ip_vizinho} falhou!")
